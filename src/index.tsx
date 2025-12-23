@@ -151,6 +151,19 @@ export default function Main() {
                 </ActionPanel>
               }
             />
+            <List.Item 
+              icon={{ source: Icon.ArrowRight }}
+              title="Create Time Entry"
+              actions={
+                <ActionPanel>
+                  <Action.Push
+                    icon={Icon.ArrowRight}
+                    title="Create Time Entry"
+                    target={<CreateEntry latestTimeEntry={entries[0]} />}
+                  />
+                </ActionPanel>
+              }
+            />
           </List.Section>
           <List.Section title="Latest entries">
             {entries.map((entry) =>
@@ -196,71 +209,39 @@ export default function Main() {
   );
 }
 
-function NewEntry({ updateTimeEntries }: { updateTimeEntries: () => void }) {
+function ProjectDropdown({ setLoadingIndicator }: { setLoadingIndicator: (isLoading: boolean) => void }) {
   const { config } = useConfig();
+
   const [projects, setProjects] = useState<Project[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const { pop } = useNavigation();
 
   useEffect(() => {
     if (isEmpty(config)) return;
 
-    async function getAllProjectsAndTagsOnWorkspace(): Promise<void> {
-      setIsLoading(true);
+    async function getAllProjectsOnWorkspace(): Promise<void> {
+      setLoadingIndicator(true);
 
-      const [storedProjects, storedTags] = await Promise.all([
-        LocalStorage.getItem<string>("projects"),
-        LocalStorage.getItem<string>("tags"),
-      ]);
+      const storedProjects = await LocalStorage.getItem<string>("projects");
       if (storedProjects) setProjects(JSON.parse(storedProjects));
-      if (storedTags) setTags(JSON.parse(storedTags));
 
-      const [projectsResponse, tagsResponse] = await Promise.all([
-        fetcher(`/workspaces/${config.workspaceId}/projects?page-size=1000&archived=false`),
-        fetcher(`/workspaces/${config.workspaceId}/tags?page-size=1000&archived=false`),
-      ]);
-
+      const projectsResponse = await fetcher(`/workspaces/${config.workspaceId}/projects?page-size=1000&archived=false`);
       setProjects(projectsResponse.data || []);
       LocalStorage.setItem("projects", JSON.stringify(projectsResponse.data));
-      setTags(tagsResponse.data || []);
-      LocalStorage.setItem("tags", JSON.stringify(tagsResponse.data));
-      setIsLoading(false);
+
+      setLoadingIndicator(false);
     }
 
-    getAllProjectsAndTagsOnWorkspace();
+    getAllProjectsOnWorkspace();
   }, [config]);
 
   return (
-    <Form
-      navigationTitle="Add new time entry"
-      isLoading={isLoading}
-      actions={
-        <ActionPanel>
-          <Action.SubmitForm
-            title="Start"
-            onSubmit={({ description, projectId, taskId, tagIds }) => {
-              if (projectId) {
-                addNewTimeEntry(description, projectId, taskId === "-1" ? null : taskId, tagIds).then(
-                  updateTimeEntries,
-                );
-                pop();
-              } else {
-                showToast(Toast.Style.Failure, "Project is required.");
-              }
-            }}
-          />
-          <Action.SubmitForm title="Discard" onSubmit={pop} />
-        </ActionPanel>
-      }
-    >
+    <>
       <Form.Dropdown
         id="projectId"
         title="Project"
         onChange={(projectId) => {
           async function getAllTasksForProject(projectId: string): Promise<void> {
-            setIsLoading(true);
+            setLoadingIndicator(true);
 
             const storedTasks: string | undefined = await LocalStorage.getItem(`project[${projectId}]`);
             if (storedTasks) setTasks(JSON.parse(storedTasks));
@@ -271,7 +252,7 @@ function NewEntry({ updateTimeEntries }: { updateTimeEntries: () => void }) {
 
             setTasks(data || []);
             LocalStorage.setItem(`project[${projectId}]`, JSON.stringify(data));
-            setIsLoading(false);
+            setLoadingIndicator(false);
           }
 
           getAllTasksForProject(projectId);
@@ -305,17 +286,121 @@ function NewEntry({ updateTimeEntries }: { updateTimeEntries: () => void }) {
           </Form.Dropdown.Section>
         </Form.Dropdown>
       ) : null}
+    </>
+  );
+}
 
-      <Form.TextField id="description" title="Description" placeholder="What are you working on?" autoFocus />
+function TagPicker({ setLoadingIndicator }: { setLoadingIndicator: (isLoading: boolean) => void }) {
+  const { config } = useConfig();
+  const [tags, setTags] = useState<Tag[]>([]);
 
+  useEffect(() => {
+    if (isEmpty(config)) return;
+
+    async function getAllTagsOnWorkspace(): Promise<void> {
+      setLoadingIndicator(true);
+
+      const storedTags = await LocalStorage.getItem<string>("tags");
+      if (storedTags) setTags(JSON.parse(storedTags));
+
+      const tagsResponse = await fetcher(`/workspaces/${config.workspaceId}/tags?page-size=1000&archived=false`);
+      setTags(tagsResponse.data || []);
+      LocalStorage.setItem("tags", JSON.stringify(tagsResponse.data));
+
+      setLoadingIndicator(false);
+    }
+
+    getAllTagsOnWorkspace();
+  }, [config]);
+
+  return (
+    <>
       <Form.Separator />
       <Form.TagPicker title="Tags (optional)" id="tagIds" placeholder="Search tags">
         {tags.map((tag) => (
           <Form.TagPicker.Item key={tag.id} title={tag.name} value={tag.id} />
         ))}
       </Form.TagPicker>
+    </>
+  );
+}
+
+function CreateEntry({ latestTimeEntry }: { latestTimeEntry: TimeEntry | undefined }) {
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
+  const format = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
+
+  return (
+    <Form
+      navigationTitle="Create Time Entry"
+      isLoading={isLoading}
+    >
+      <ProjectDropdown setLoadingIndicator={setLoadingIndicator} />
+
+      <Form.TextField id="description" title="Description" placeholder="What are you working on?" autoFocus />
+
+      <Form.DatePicker 
+        id="start" 
+        title="Start" 
+        info={
+          latestTimeEntry 
+            ? `Latest entry: ${latestTimeEntry.description} (${format.format(new Date(latestTimeEntry.timeInterval.start))} - ${format.format(new Date(latestTimeEntry.timeInterval.end))})` 
+            : undefined
+        }
+      />
+
+      <Form.DatePicker id="end" title="End" />
+
+      <TagPicker setLoadingIndicator={setLoadingIndicator} />
     </Form>
   );
+
+  function setLoadingIndicator(isLoading: boolean) {
+    setIsLoading(isLoading);
+  }
+}
+
+function NewEntry({ updateTimeEntries }: { updateTimeEntries: () => void }) {
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const { pop } = useNavigation();
+
+  return (
+    <Form
+      navigationTitle="Start New Timer"
+      isLoading={isLoading}
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm
+            title="Start"
+            onSubmit={({ description, projectId, taskId, tagIds }) => {
+              if (projectId) {
+                addNewTimeEntry(description, projectId, taskId === "-1" ? null : taskId, tagIds).then(
+                  updateTimeEntries,
+                );
+                pop();
+              } else {
+                showToast(Toast.Style.Failure, "Project is required.");
+              }
+            }}
+          />
+          <Action.SubmitForm title="Discard" onSubmit={pop} />
+        </ActionPanel>
+      }
+    >
+      <ProjectDropdown setLoadingIndicator={setLoadingIndicator} />
+
+      <Form.TextField id="description" title="Description" placeholder="What are you working on?" autoFocus />
+
+      <TagPicker setLoadingIndicator={setLoadingIndicator} />
+    </Form>
+  );
+
+  function setLoadingIndicator(isLoading: boolean) {
+    setIsLoading(isLoading);
+  }
 }
 
 async function getTimeEntries({ onError }: { onError?: (state: boolean) => void }): Promise<TimeEntry[]> {
