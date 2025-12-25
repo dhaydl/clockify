@@ -157,7 +157,7 @@ export default function Main() {
                   <Action.Push
                     icon={Icon.ArrowRight}
                     title="Create Time Entry"
-                    target={<CreateEntry latestTimeEntry={allEntries[0]} />}
+                    target={<CreateEntry latestTimeEntry={allEntries[0]} updateTimeEntries={updateTimeEntries} />}
                   />
                 </ActionPanel>
               }
@@ -191,12 +191,8 @@ export default function Main() {
                         icon={Icon.Play}
                         title="Start Timer"
                         onAction={() => {
-                          addNewTimeEntry(
-                            entry.description,
-                            entry.projectId,
-                            entry.taskId,
-                            entry.tags.map((tag) => tag.id),
-                          ).then(() => updateTimeEntries());
+                          addNewTimeEntry("startTimer", entry.projectId, entry.tags.map(t => t.id), entry.description, entry.taskId, undefined, undefined)
+                            .then(() => updateTimeEntries());
                         }}
                       />
                       <OpenWebPage />
@@ -346,8 +342,9 @@ function TagPicker({ setLoadingIndicator }: { setLoadingIndicator: (isLoading: b
   );
 }
 
-function CreateEntry({ latestTimeEntry }: { latestTimeEntry: TimeEntry | undefined }) {
+function CreateEntry({ latestTimeEntry, updateTimeEntries }: { latestTimeEntry: TimeEntry | undefined, updateTimeEntries: () => void }) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const { pop } = useNavigation();
 
   const format = new Intl.DateTimeFormat("en-US", {
     dateStyle: "short",
@@ -358,6 +355,24 @@ function CreateEntry({ latestTimeEntry }: { latestTimeEntry: TimeEntry | undefin
     <Form
       navigationTitle="Create Time Entry"
       isLoading={isLoading}
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm
+            title="Save"
+            onSubmit={({ description, projectId, taskId, tagIds, start, end }) => {
+              if (projectId) {
+                addNewTimeEntry("createManually", projectId, tagIds, description, taskId, start, end)
+                  .then(updateTimeEntries)
+
+                pop();
+              } else {
+                showToast(Toast.Style.Failure, "Project is required.");
+              }
+            }}
+          />
+          <Action.SubmitForm title="Discard" onSubmit={pop} />
+        </ActionPanel>
+      }
     >
       <ProjectDropdown setLoadingIndicator={setLoadingIndicator} />
 
@@ -398,9 +413,9 @@ function NewEntry({ updateTimeEntries }: { updateTimeEntries: () => void }) {
             title="Start"
             onSubmit={({ description, projectId, taskId, tagIds }) => {
               if (projectId) {
-                addNewTimeEntry(description, projectId, taskId === "-1" ? null : taskId, tagIds).then(
-                  updateTimeEntries,
-                );
+                addNewTimeEntry("startTimer", projectId, tagIds, description, taskId, undefined, undefined)
+                  .then(updateTimeEntries);
+
                 pop();
               } else {
                 showToast(Toast.Style.Failure, "Project is required.");
@@ -463,12 +478,33 @@ async function stopCurrentTimer(): Promise<void> {
 }
 
 async function addNewTimeEntry(
-  description: string | undefined | null,
+  action: "startTimer",
   projectId: string,
+  tagIds: string[],
+  description: string | undefined | null,
   taskId: string | undefined | null,
+  start: undefined,
+  end: undefined,
+): Promise<void>;
+async function addNewTimeEntry(
+  action: "createManually",
+  projectId: string,
+  tagIds: string[],
+  description: string | undefined | null,
+  taskId: string | undefined | null,
+  start: Date | undefined | null,
+  end: Date | undefined | null,
+): Promise<void>;
+async function addNewTimeEntry(
+  action: "startTimer" | "createManually",
+  projectId: string,
   tagIds: string[] = [],
+  description: string | undefined | null,
+  taskId: string | undefined | null,
+  start: Date | undefined | null,
+  end: Date | undefined | null,
 ): Promise<void> {
-  showToast(Toast.Style.Animated, "Starting…");
+  showToast(Toast.Style.Animated, action === "startTimer" ? "Starting…" : "Saving…");
 
   const workspaceId = await LocalStorage.getItem("workspaceId");
 
@@ -478,19 +514,16 @@ async function addNewTimeEntry(
       description,
       taskId,
       projectId,
-      timeInterval: {
-        start: new Date().toISOString(),
-        end: null,
-        duration: null,
-      },
+      start: start ? start.toISOString() : new Date().toISOString(),
+      end: end ? end.toISOString() : undefined,
       tagIds,
       customFieldValues: [],
     },
   });
 
   if (data?.id) {
-    showToast(Toast.Style.Success, "Timer is running");
+    showToast(Toast.Style.Success, action === "startTimer" ? "Timer is running" : "Time entry is saved");
   } else {
-    showToast(Toast.Style.Failure, "Timer could not be started");
+    showToast(Toast.Style.Failure, action === "startTimer" ? "Timer could not be started" : "Time entry could not be saved");
   }
 }
