@@ -9,6 +9,7 @@ import {
   Action,
   LocalStorage,
   openExtensionPreferences,
+  getPreferenceValues
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
 import isEmpty from "lodash.isempty";
@@ -78,6 +79,7 @@ function ItemInProgress({ entry, updateTimeEntries }: { entry: TimeEntry; update
 export default function Main() {
   const { config, isValidToken, setIsValidToken } = useConfig();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
+  const [allEntries, setAllEntries] = useState<TimeEntry[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isShowingTags] = useCachedState<boolean>("show-tags");
 
@@ -88,17 +90,12 @@ export default function Main() {
       setIsLoading(true);
 
       const storedEntries: string | undefined = await LocalStorage.getItem("entries");
-
       if (storedEntries) {
-        setEntries(JSON.parse(storedEntries));
+        processLoadedTimeEntries(JSON.parse(storedEntries));
       }
 
-      const filteredEntries = await getTimeEntries({ onError: setIsValidToken });
-
-      if (filteredEntries) {
-        setEntries(filteredEntries);
-        LocalStorage.setItem("entries", JSON.stringify(filteredEntries));
-      }
+      const allEntries = await getTimeEntries({ onError: setIsValidToken });
+      processLoadedTimeEntries(allEntries);
 
       setIsLoading(false);
     }
@@ -110,16 +107,17 @@ export default function Main() {
     setIsLoading(true);
 
     getTimeEntries({ onError: setIsValidToken })
-      .then((entries) => {
-        if (entries) {
-          setEntries(entries);
-          LocalStorage.setItem("entries", JSON.stringify(entries));
-        }
-
+      .then((allEntries) => {
+        processLoadedTimeEntries(allEntries);
         setIsLoading(false);
       })
       .catch(() => setIsLoading(false));
   }, [getTimeEntries]);
+
+  const format = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
 
   return (
     <List isLoading={isLoading} searchBarPlaceholder="Search time entries">
@@ -159,7 +157,7 @@ export default function Main() {
                   <Action.Push
                     icon={Icon.ArrowRight}
                     title="Create Time Entry"
-                    target={<CreateEntry latestTimeEntry={entries[0]} />}
+                    target={<CreateEntry latestTimeEntry={allEntries[0]} />}
                   />
                 </ActionPanel>
               }
@@ -176,6 +174,12 @@ export default function Main() {
                   title={entry.project?.clientName || "No Client"}
                   subtitle={`${[entry.description || "No Description", entry.task?.name].filter(Boolean).join(" • ")}`}
                   accessories={[
+                    ...(getPreferenceValues<Preferences>().groupSameEntries 
+                      ? [] : [
+                        { text: format.format(new Date(entry.timeInterval.start)) }, 
+                        { text: format.format(new Date(entry.timeInterval.end)) }
+                      ]
+                    ),
                     { text: entry.project?.name, icon: { source: Icon.Dot, tintColor: entry.project?.color } },
                     ...(isShowingTags ? entry.tags.map((tag) => ({ tag: tag.name })) : []),
                   ]}
@@ -207,6 +211,23 @@ export default function Main() {
       )}
     </List>
   );
+
+  function processLoadedTimeEntries(entries: TimeEntry[]): void {
+    if (entries) {
+      setAllEntries(entries);
+      LocalStorage.setItem("entries", JSON.stringify(entries));
+
+      setEntries(
+        getPreferenceValues<Preferences>().groupSameEntries
+          ? uniqWith(
+              entries,
+              (a: TimeEntry, b: TimeEntry) =>
+                a.projectId === b.projectId && a.taskId === b.taskId && a.description === b.description,
+            )
+          : entries
+      );
+    }
+  }
 }
 
 function ProjectDropdown({ setLoadingIndicator }: { setLoadingIndicator: (isLoading: boolean) => void }) {
@@ -417,13 +438,7 @@ async function getTimeEntries({ onError }: { onError?: (state: boolean) => void 
   }
 
   if (data?.length) {
-    const filteredEntries: TimeEntry[] = uniqWith(
-      data,
-      (a: TimeEntry, b: TimeEntry) =>
-        a.projectId === b.projectId && a.taskId === b.taskId && a.description === b.description,
-    );
-
-    return filteredEntries;
+    return data;
   } else {
     return [];
   }

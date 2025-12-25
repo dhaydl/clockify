@@ -55,6 +55,14 @@
         }
       ],
       "default": "GLOBAL"
+    },
+    {
+      "name": "groupSameEntries",
+      "label": "Group Same Entries",
+      "description": "Groups entries belonging to the same task and project with the same description together",
+      "type": "checkbox",
+      "default": true,
+      "required": false
     }
   ],
   "commands": [
